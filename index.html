@@ -1,459 +1,438 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { 
-  CreditCard, Search, Plus, Home, ShoppingCart, Coffee, Plane, Train, 
-  Smartphone, Store, Wallet, X, Trash2
-} from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { CreditCard, Search, Plus, Home, ShoppingCart, Coffee, Plane, Trash2, Users, Copy, CheckCircle2, RefreshCw } from 'lucide-react';
+
+// --- (Firebase 雲端連線功能已被安全拔除) ---
+
+// 產生隨機連線代碼 (5碼大寫英數字)
+const generateSyncCode = () => {
+  return Math.random().toString(36).substring(2, 7).toUpperCase();
+};
 
 // 預設常見的消費類別
 const CATEGORIES = [
-  { id: '網購', name: '線上網購', icon: <ShoppingCart size={20} /> },
-  { id: '行動支付', name: '行動支付', icon: <Smartphone size={20} /> },
-  { id: '超商', name: '便利商店', icon: <Store size={20} /> },
-  { id: '餐廳', name: '餐飲美食', icon: <Coffee size={20} /> },
-  { id: '旅遊', name: '海外/旅遊', icon: <Plane size={20} /> },
-  { id: '交通', name: '交通/加油', icon: <Train size={20} /> },
-  { id: '一般', name: '一般消費', icon: <Wallet size={20} /> },
-];
-
-// 預設的信用卡資料庫範例
-const INITIAL_CARDS = [
-  {
-    id: 1, bank: '國泰世華', name: 'CUBE卡', color: 'from-gray-800 to-gray-600',
-    rewards: [
-      { category: '網購', rate: 3, label: '3%', desc: '需切換「玩數位」權益' },
-      { category: '餐廳', rate: 3, label: '3%', desc: '需切換「樂饗購」權益' },
-      { category: '一般', rate: 0.3, label: '0.3%', desc: '無上限' }
-    ]
-  },
-  {
-    id: 2, bank: '台新銀行', name: '@GoGo卡', color: 'from-purple-600 to-indigo-600',
-    rewards: [
-      { category: '行動支付', rate: 3.8, label: '3.8%', desc: '綁定 LINE Pay/台新Pay' },
-      { category: '網購', rate: 3.8, label: '3.8%', desc: '指定網購平台' }
-    ]
-  }
+  { id: '線上網購', name: '線上網購', icon: ShoppingCart },
+  { id: '行動支付', name: '行動支付', icon: Coffee },
+  { id: '便利商店', name: '便利商店', icon: Home },
+  { id: '餐飲美食', name: '餐飲美食', icon: Coffee },
+  { id: '海外/旅遊', name: '海外/旅遊', icon: Plane },
+  { id: '交通/加油', name: '交通/加油', icon: Plane },
+  { id: '一般消費', name: '一般消費', icon: CreditCard },
 ];
 
 export default function App() {
-  // 狀態管理：初始化時優先讀取本機暫存，若無則使用預設資料
-  const [cards, setCards] = useState(() => {
-    const savedCards = localStorage.getItem('my_local_credit_cards');
-    if (savedCards) {
-      try {
-        return JSON.parse(savedCards);
-      } catch (e) {
-        console.error("讀取存檔失敗", e);
-      }
-    }
-    return INITIAL_CARDS;
+  // --- 系統狀態 ---
+  const [activeTab, setActiveTab] = useState('home'); // 'home', 'cards', 'add', 'sync'
+  const [selectedCategory, setSelectedCategory] = useState(CATEGORIES[0].id);
+  const [cards, setCards] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // --- 操作狀態 ---
+  const [selectedCardForEdit, setSelectedCardForEdit] = useState(null);
+  const [newCard, setNewCard] = useState({
+    bank: '',
+    name: '',
+    color: 'from-blue-500 to-blue-700',
+    rewards: []
   });
 
-  const [activeTab, setActiveTab] = useState('home'); // 'home', 'cards', 'add'
-  const [selectedCategory, setSelectedCategory] = useState(null);
-  
-  // 新增卡片的暫存表單狀態
-  const [newCard, setNewCard] = useState({ bank: '', name: '', color: 'from-blue-500 to-blue-700', rewards: [] });
-  const [newReward, setNewReward] = useState({ category: '一般', rate: '', label: '', desc: '' });
-
-  // 當卡片資料變動時，自動存檔到本機瀏覽器 (Local Storage)
+  // --- 本地儲存卡 (localStorage) 讀取/寫入 功能 ---
+  // 1. 在 App 啟動時，從瀏覽器記憶卡讀取卡片資料
   useEffect(() => {
-    localStorage.setItem('my_local_credit_cards', JSON.stringify(cards));
-  }, [cards]);
+    // 嘗試從瀏覽器暫存讀取，沒有的話就產生一組新的
+    const savedCards = localStorage.getItem('credit_app_local_cards');
+    if (savedCards) {
+      try {
+        setCards(JSON.parse(savedCards));
+      } catch (e) {
+        console.error("解析本地資料失敗，重設為空。", e);
+        setCards([]);
+      }
+    }
+    setIsLoading(false);
+  }, []);
 
-  // 根據選擇的類別，計算並排序最佳卡片
+  // 2. 當卡片資料有變動時，自動存回瀏覽器記憶卡
+  useEffect(() => {
+    // 只有在資料載入完成後才寫入，避免蓋掉舊資料
+    if (!isLoading) {
+      localStorage.setItem('credit_app_local_cards', JSON.stringify(cards));
+    }
+  }, [cards, isLoading]);
+
+  // 計算推薦排序
   const recommendations = useMemo(() => {
     if (!selectedCategory) return [];
     
     let results = [];
     cards.forEach(card => {
+      // 尋找這張卡片是否有符合當前類別的回饋
       const matchingReward = card.rewards.find(r => r.category === selectedCategory);
       if (matchingReward) {
-        results.push({ ...card, matchedReward: matchingReward });
+        results.push({
+          ...card,
+          matchedReward: matchingReward
+        });
       }
     });
 
-    // 依據回饋率 (rate) 由高到低排序
+    // 依照回饋率從高到低排序
     return results.sort((a, b) => b.matchedReward.rate - a.matchedReward.rate);
   }, [cards, selectedCategory]);
 
-  // 新增回饋規則到暫存表單
-  const handleAddRewardToForm = () => {
-    if (!newReward.rate || !newReward.label) {
-      alert('請填寫完整回饋資訊（顯示文字與排序數值）');
-      return;
-    }
-    setNewCard({
-      ...newCard,
-      rewards: [...newCard.rewards, { ...newReward, rate: parseFloat(newReward.rate) }]
-    });
-    setNewReward({ category: '一般', rate: '', label: '', desc: '' });
-  };
-
-  // 移除暫存表單的回饋規則
-  const handleRemoveRewardFromForm = (index) => {
-    const updatedRewards = newCard.rewards.filter((_, i) => i !== index);
-    setNewCard({ ...newCard, rewards: updatedRewards });
-  };
-
-  // 儲存新卡片
-  const handleSaveCard = () => {
+  // 新增/編輯卡片功能
+  const handleAddOrEditCard = () => {
+    // 簡單的驗證
     if (!newCard.bank || !newCard.name) {
-      alert('請填寫銀行與卡片名稱');
+      alert("請輸入銀行名稱和卡片名稱。");
       return;
     }
-    const newId = Date.now(); // 使用時間戳記當作唯一 ID
-    setCards([{ ...newCard, id: newId }, ...cards]); // 新卡片排在最前面
+
+    if (selectedCardForEdit) {
+      // 編輯模式
+      setCards(cards.map(card => card.id === selectedCardForEdit.id ? { ...newCard, id: card.id } : card));
+    } else {
+      // 新增模式
+      const newCardWithId = { ...newCard, id: Date.now().toString() };
+      setCards([...cards, newCardWithId]);
+    }
+    
+    // 重設狀態並回到卡包頁面
     setNewCard({ bank: '', name: '', color: 'from-blue-500 to-blue-700', rewards: [] });
+    setSelectedCardForEdit(null);
     setActiveTab('cards');
   };
 
-  // 刪除卡片
-  const handleDeleteCard = (id) => {
-    if (confirm('確定要從你的手機裡刪除這張卡片嗎？')) {
-      setCards(cards.filter(c => c.id !== id));
+  // 刪除卡片功能
+  const handleDeleteCard = (cardId) => {
+    if (window.confirm("確定要刪除這張卡片嗎？此動作無法復原。")) {
+      setCards(cards.filter(card => card.id !== cardId));
+    }
+  };
+
+  // 開始編輯卡片
+  const startEditCard = (card) => {
+    setSelectedCardForEdit(card);
+    setNewCard({ ...card });
+    setActiveTab('add');
+  };
+
+  // 添加新的回饋規則輸入框
+  const addRewardInput = () => {
+    setNewCard({
+      ...newCard,
+      rewards: [...newCard.rewards, { category: CATEGORIES[0].id, rate: '', label: '', desc: '' }]
+    });
+  };
+
+  // 更新特定的回饋規則
+  const updateRewardInput = (index, field, value) => {
+    const updatedRewards = [...newCard.rewards];
+    updatedRewards[index] = { ...updatedRewards[index], [field]: value };
+    setNewCard({ ...newCard, rewards: updatedRewards });
+  };
+
+  // 刪除特定的回饋規則
+  const removeRewardInput = (index) => {
+    setNewCard({
+      ...newCard,
+      rewards: newCard.rewards.filter((_, i) => i !== index)
+    });
+  };
+
+  // --- 介面渲染 ---
+
+  const renderHome = () => (
+    <div className="p-4 space-y-6">
+      <h1 className="text-3xl font-bold text-gray-800">你現在想刷什麼？</h1>
+      
+      <div className="grid grid-cols-3 gap-3">
+        {CATEGORIES.map(cat => {
+          const Icon = cat.icon;
+          const isSelected = selectedCategory === cat.id;
+          return (
+            <button
+              key={cat.id}
+              onClick={() => setSelectedCategory(cat.id)}
+              className={`flex flex-col items-center justify-center p-3 h-28 border rounded-xl transition-all ${
+                isSelected
+                  ? 'bg-blue-50 border-blue-500 text-blue-700 ring-2 ring-blue-100 scale-105 shadow-md'
+                  : 'bg-white border-gray-100 text-gray-600 hover:border-blue-200 hover:bg-blue-50'
+              }`}
+            >
+              <Icon className={`size-8 mb-2 ${isSelected ? 'text-blue-600' : 'text-gray-400'}`} />
+              <span className={`text-sm font-medium ${isSelected ? 'text-blue-800' : 'text-gray-700'}`}>{cat.name}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="space-y-4">
+        <h2 className="text-xl font-semibold text-gray-700">準備結帳了嗎？</h2>
+        <p className="text-gray-600">點擊上方的消費類別，馬上幫你挑出皮夾裡回饋最高的神卡！</p>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center p-10"><RefreshCw className="animate-spin size-8 text-gray-300"/></div>
+      ) : recommendations.length > 0 ? (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-bold text-gray-900">推薦卡片</h2>
+            <div className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold">{selectedCategory}</div>
+          </div>
+          
+          {recommendations.map((card, index) => (
+            <div key={card.id} className={`bg-gradient-to-r ${card.color} text-white p-5 rounded-3xl shadow-lg relative ${index === 0 ? 'scale-105 z-10' : ''}`}>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-mono uppercase tracking-wider">{card.bank}</span>
+                <span className="text-sm font-bold bg-white text-gray-900 px-3 py-1 rounded-full">{card.matchedReward.label}</span>
+              </div>
+              <div className="text-5xl font-extrabold mb-1">{card.matchedReward.rate}% <span className="text-base font-normal">回饋</span></div>
+              <p className="text-sm font-semibold mb-3">{card.name}</p>
+              <p className="text-xs opacity-80 mt-2">{card.matchedReward.desc}</p>
+            </div>
+          ) )}
+        </div>
+      ) : (
+        <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-2xl p-8 text-center space-y-3">
+          <CreditCard className="size-12 mx-auto text-gray-300" />
+          <h3 className="text-xl font-semibold text-gray-600">還沒有這個類別的卡片</h3>
+          <p className="text-gray-500">前往「我的卡包」新增卡片和回饋規則吧！</p>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderCards = () => (
+    <div className="p-4 space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-3xl font-bold text-gray-800">我的卡包</h1>
+        <button
+          onClick={() => {
+            setSelectedCardForEdit(null);
+            setNewCard({ bank: '', name: '', color: 'from-blue-500 to-blue-700', rewards: [] });
+            setActiveTab('add');
+          }}
+          className="bg-blue-600 text-white p-2 rounded-xl flex items-center gap-1.5 px-4 font-bold"
+        >
+          <Plus size={18} /> 新增
+        </button>
+      </div>
+      
+      {isLoading ? (
+        <div className="flex justify-center p-10"><RefreshCw className="animate-spin size-8 text-gray-300"/></div>
+      ) : cards.length > 0 ? (
+        <div className="grid grid-cols-2 gap-4">
+          {cards.map(card => (
+            <div key={card.id} className="relative group">
+              <div className={`bg-gradient-to-r ${card.color} text-white p-4 h-36 rounded-2xl shadow relative flex flex-col justify-between`}>
+                <div>
+                  <div className="text-xs font-mono uppercase tracking-wider mb-0.5">{card.bank}</div>
+                  <div className="text-lg font-bold leading-tight line-clamp-2">{card.name}</div>
+                </div>
+                <div className="text-xs opacity-80">共有 {card.rewards.length} 條回饋</div>
+              </div>
+              <div className="absolute top-2 right-2 flex gap-1 group-hover:opacity-100 transition-opacity">
+                <button onClick={() => startEditCard(card)} className="bg-white/80 p-1 rounded-md text-gray-700 hover:bg-white"><Copy size={14}/></button>
+                <button onClick={() => handleDeleteCard(card.id)} className="bg-red-100/80 p-1 rounded-md text-red-700 hover:bg-red-100"><Trash2 size={14}/></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-2xl p-8 text-center space-y-3">
+          <CreditCard className="size-12 mx-auto text-gray-300" />
+          <h3 className="text-xl font-semibold text-gray-600">你的卡包是空的</h3>
+          <p className="text-gray-500">快點擊右上角新增你的第一張卡片！</p>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderAddOrEdit = () => (
+    <div className="p-4 space-y-6 pb-20">
+      <div className="flex items-center justify-between">
+        <h1 className="text-3xl font-bold text-gray-800">{selectedCardForEdit ? '編輯卡片' : '新增卡片'}</h1>
+        <button
+          onClick={() => setActiveTab('cards')}
+          className="bg-gray-100 text-gray-600 p-2 px-4 rounded-xl font-bold"
+        >
+          取消
+        </button>
+      </div>
+
+      {/* 卡片預覽 */}
+      <div className="space-y-3">
+        <h2 className="text-lg font-semibold text-gray-700">卡片外觀預覽</h2>
+        <div className={`bg-gradient-to-r ${newCard.color} text-white p-5 rounded-3xl shadow-lg relative`}>
+          <div className="text-xs font-mono uppercase tracking-wider mb-1">{newCard.bank || '輸入銀行名稱'}</div>
+          <div className="text-3xl font-extrabold mb-1">{newCard.name || '輸入卡片名稱'}</div>
+          <div className="w-12 h-8 bg-yellow-400 rounded-md absolute top-5 right-5"/>
+        </div>
+      </div>
+
+      {/* 卡片資訊 */}
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-gray-600">銀行名稱</label>
+          <input
+            type="text"
+            value={newCard.bank}
+            onChange={e => setNewCard({ ...newCard, bank: e.target.value })}
+            placeholder="例如: 玉山銀行"
+            className="w-full p-3 border border-gray-100 rounded-xl bg-gray-50 focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
+          />
+        </div>
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-gray-600">卡片名稱</label>
+          <input
+            type="text"
+            value={newCard.name}
+            onChange={e => setNewCard({ ...newCard, name: e.target.value })}
+            placeholder="例如: 雙幣卡"
+            className="w-full p-3 border border-gray-100 rounded-xl bg-gray-50 focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
+          />
+        </div>
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-gray-600">卡片顏色</label>
+          <div className="flex items-center gap-3">
+            {[
+              { class: 'from-blue-500 to-blue-700', name: '藍' },
+              { class: 'from-purple-500 to-purple-700', name: '紫' },
+              { class: 'from-orange-500 to-orange-700', name: '橘' },
+              { class: 'from-red-500 to-red-700', name: '紅' },
+              { class: 'from-gray-700 to-gray-900', name: '黑' },
+              { class: 'from-green-500 to-green-700', name: '綠' },
+            ].map(col => (
+              <button
+                key={col.name}
+                onClick={() => setNewCard({ ...newCard, color: col.class })}
+                className={`w-10 h-10 rounded-full bg-gradient-to-r ${col.class} border-4 transition ${newCard.color === col.class ? 'border-blue-300 scale-110 shadow' : 'border-white'}`}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* 回饋規則 */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-gray-700">回饋規則設定</h2>
+          <button onClick={addRewardInput} className="bg-gray-100 text-blue-700 p-2 rounded-xl text-sm font-bold flex items-center gap-1">
+            <Plus size={16}/> 新增規則
+          </button>
+        </div>
+
+        {newCard.rewards.map((reward, index) => (
+          <div key={index} className="bg-white p-4 border border-gray-100 rounded-2xl shadow-sm relative">
+            <button onClick={() => removeRewardInput(index)} className="absolute top-2 right-2 p-1 text-gray-400 hover:text-red-500"><Trash2 size={16}/></button>
+            <div className="grid grid-cols-3 gap-3 mb-3">
+              <div className="space-y-1 col-span-2">
+                <label className="text-xs font-medium text-gray-500">消費類別</label>
+                <select
+                  value={reward.category}
+                  onChange={e => updateRewardInput(index, 'category', e.target.value)}
+                  className="w-full p-2 text-sm border border-gray-100 rounded-lg bg-gray-50 focus:ring-blue-100 focus:border-blue-300"
+                >
+                  {CATEGORIES.map(cat => (
+                    <option key={cat.id} value={cat.id}>{cat.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-gray-500">回饋率 (%)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={reward.rate}
+                  onChange={e => updateRewardInput(index, 'rate', e.target.value)}
+                  placeholder="例如: 3.2"
+                  className="w-full p-2 text-sm border border-gray-100 rounded-lg bg-gray-50 focus:ring-blue-100 focus:border-blue-300"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-gray-500">回饋標籤 (簡短)</label>
+                <input
+                  type="text"
+                  value={reward.label}
+                  onChange={e => updateRewardInput(index, 'label', e.target.value)}
+                  placeholder="例如: 全通路"
+                  className="w-full p-2 text-sm border border-gray-100 rounded-lg bg-gray-50 focus:ring-blue-100 focus:border-blue-300"
+                />
+              </div>
+              <div className="space-y-1 col-span-2">
+                <label className="text-xs font-medium text-gray-500">備註描述</label>
+                <input
+                  type="text"
+                  value={reward.desc}
+                  onChange={e => updateRewardInput(index, 'desc', e.target.value)}
+                  placeholder="例如: 每月上限300元"
+                  className="w-full p-2 text-sm border border-gray-100 rounded-lg bg-gray-50 focus:ring-blue-100 focus:border-blue-300"
+                />
+              </div>
+            </div>
+          </div>
+        ))}
+
+        {newCard.rewards.length === 0 && (
+          <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-2xl p-6 text-center space-y-2">
+            <p className="text-gray-500 text-sm">尚未設定任何回饋規則，卡片將無法被搜尋到。</p>
+            <button onClick={addRewardInput} className="bg-blue-100 text-blue-700 p-2 px-4 rounded-xl text-sm font-bold flex items-center gap-1 mx-auto">
+              <Plus size={16}/> 點此新增第一條規則
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* 儲存按鈕 (固定到底部) */}
+      <div className="fixed bottom-0 left-0 right-0 p-4 bg-white/90 backdrop-blur-sm border-t border-gray-100 z-30">
+        <button
+          onClick={handleAddOrEditCard}
+          className="w-full bg-blue-600 text-white p-3.5 rounded-2xl text-lg font-extrabold shadow-lg flex items-center justify-center gap-2"
+        >
+          <CheckCircle2 size={20} />
+          {selectedCardForEdit ? '確認修改卡片' : '儲存這張卡片'}
+        </button>
+      </div>
+
+    </div>
+  );
+
+  const renderContent = () => {
+    switch (activeTab) {
+      case 'home': return renderHome();
+      case 'cards': return renderCards();
+      case 'add': return renderAddOrEdit();
+      default: return renderHome();
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col font-sans text-gray-800 pb-20 max-w-md mx-auto shadow-xl relative">
-      {/* Header */}
-      <header className="bg-white px-6 py-5 rounded-b-3xl shadow-sm z-10 flex justify-between items-center">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <CreditCard className="text-blue-600" />
-            回饋幫手
-          </h1>
-          <p className="text-xs text-gray-500 mt-1">你的專屬單機紀錄版</p>
-        </div>
-      </header>
+    <div className="bg-gray-50 min-h-screen text-gray-900 pb-20 font-sans">
+      <div className="max-w-md mx-auto bg-white min-h-screen shadow-2xl relative overflow-hidden">
+        {renderContent()}
 
-      {/* Main Content */}
-      <main className="flex-1 overflow-y-auto p-4 space-y-6">
-        
-        {/* === 分頁 1: 首頁 (快速查詢) === */}
-        {activeTab === 'home' && (
-          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div>
-              <h2 className="text-lg font-semibold mb-3">你現在想刷什麼？</h2>
-              <div className="grid grid-cols-4 gap-3">
-                {CATEGORIES.map(cat => (
-                  <button
-                    key={cat.id}
-                    onClick={() => setSelectedCategory(cat.id)}
-                    className={`flex flex-col items-center justify-center p-3 rounded-2xl transition-all duration-200 ${
-                      selectedCategory === cat.id 
-                        ? 'bg-blue-600 text-white shadow-md transform scale-105' 
-                        : 'bg-white text-gray-600 hover:bg-blue-50 border border-gray-100'
-                    }`}
-                  >
-                    <div className="mb-2">{cat.icon}</div>
-                    <span className="text-xs font-medium">{cat.name}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* 推薦結果 */}
-            {selectedCategory && (
-              <div className="mt-6 animate-in fade-in duration-300">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-bold flex items-center gap-2">
-                    <span className="bg-blue-100 text-blue-700 p-1 rounded-lg">
-                      {CATEGORIES.find(c => c.id === selectedCategory)?.icon}
-                    </span>
-                    最佳推薦卡片
-                  </h3>
-                  <span className="text-sm text-gray-500">找到 {recommendations.length} 張</span>
-                </div>
-
-                {recommendations.length > 0 ? (
-                  <div className="space-y-4">
-                    {recommendations.map((card, index) => (
-                      <div key={card.id} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex items-center relative overflow-hidden">
-                        {/* 排名標籤 */}
-                        {index === 0 && (
-                          <div className="absolute top-0 right-0 bg-yellow-400 text-yellow-900 text-[10px] font-bold px-2 py-1 rounded-bl-lg">
-                            最佳選擇
-                          </div>
-                        )}
-                        
-                        {/* 迷你卡面 */}
-                        <div className={`w-16 h-10 rounded-md bg-gradient-to-br ${card.color} flex-shrink-0 shadow-inner`} />
-                        
-                        <div className="ml-4 flex-1">
-                          <p className="text-xs text-gray-500">{card.bank}</p>
-                          <p className="font-bold text-gray-900">{card.name}</p>
-                          <p className="text-xs text-gray-500 mt-1">{card.matchedReward.desc}</p>
-                        </div>
-                        
-                        <div className="text-right ml-2">
-                          <div className="text-2xl font-black text-blue-600">
-                            {card.matchedReward.label}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-center py-10 bg-white rounded-2xl border border-dashed border-gray-200">
-                    <Search className="mx-auto text-gray-300 mb-2" size={32} />
-                    <p className="text-gray-500">你的卡包中沒有這類別的專屬回饋</p>
-                    <button 
-                      onClick={() => setActiveTab('cards')}
-                      className="mt-3 text-sm text-blue-600 bg-blue-50 px-4 py-2 rounded-full font-medium hover:bg-blue-100 transition"
-                    >
-                      去新增卡片
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-            
-            {!selectedCategory && cards.length > 0 && (
-              <div className="bg-gradient-to-r from-blue-500 to-indigo-600 rounded-2xl p-6 text-white shadow-lg mt-8">
-                <h3 className="text-xl font-bold mb-2">準備結帳了嗎？</h3>
-                <p className="text-blue-100 text-sm mb-4">點擊上方的消費類別，馬上幫你挑出皮夾裡回饋最高的神卡！</p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* === 分頁 2: 我的卡包 === */}
-        {activeTab === 'cards' && (
-          <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-500">
-            <div className="flex justify-between items-center mb-2">
-              <h2 className="text-xl font-bold">我的信用卡 ({cards.length})</h2>
-              <button 
-                onClick={() => setActiveTab('add')}
-                className="text-blue-600 flex items-center gap-1 text-sm font-medium bg-blue-50 px-3 py-1 rounded-full hover:bg-blue-100 transition"
-              >
-                <Plus size={16} /> 新增
-              </button>
-            </div>
-
-            {cards.length === 0 ? (
-              <div className="text-center py-12 px-6 bg-white rounded-3xl border border-gray-100 shadow-sm mt-8">
-                <Wallet size={48} className="mx-auto text-blue-200 mb-4" />
-                <h3 className="text-lg font-bold mb-2">卡包目前空空的</h3>
-                <p className="text-gray-500 text-sm mb-6">開始新增你手邊的信用卡，建立專屬的記帳本吧！</p>
-                <button onClick={() => setActiveTab('add')} className="bg-blue-600 text-white px-6 py-2 rounded-xl font-bold shadow-md">
-                  立即新增
-                </button>
-              </div>
-            ) : (
-              cards.map(card => (
-                <div key={card.id} className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
-                  {/* 虛擬卡面設計 */}
-                  <div className={`p-5 text-white bg-gradient-to-br ${card.color} relative`}>
-                    <div className="absolute top-0 right-0 p-4 opacity-20">
-                      <CreditCard size={40} />
-                    </div>
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <p className="text-white/80 text-xs font-medium tracking-wider">{card.bank}</p>
-                        <h3 className="text-xl font-bold mt-1 tracking-wide">{card.name}</h3>
-                      </div>
-                      {/* 晶片圖示 */}
-                      <div className="w-8 h-6 bg-yellow-200/40 rounded border border-yellow-100/30 flex flex-col justify-between py-1 px-1">
-                        <div className="border-b border-yellow-100/30 h-1"></div>
-                        <div className="border-b border-yellow-100/30 h-1"></div>
-                      </div>
-                    </div>
-                    <button 
-                      onClick={() => handleDeleteCard(card.id)}
-                      className="absolute bottom-4 right-4 bg-black/20 hover:bg-black/40 p-2 rounded-full backdrop-blur-sm transition"
-                      title="刪除此卡片"
-                    >
-                      <Trash2 size={14} className="text-white" />
-                    </button>
-                  </div>
-                  
-                  {/* 回饋清單 */}
-                  <div className="p-4 bg-white">
-                    <h4 className="text-xs font-bold text-gray-400 mb-3 uppercase tracking-wider">主要回饋權益</h4>
-                    <div className="space-y-3">
-                      {card.rewards.map((reward, i) => (
-                        <div key={i} className="flex items-start">
-                          <div className="bg-gray-50 p-2 rounded-lg text-gray-500 mr-3">
-                            {CATEGORIES.find(c => c.id === reward.category)?.icon || <Wallet size={16} />}
-                          </div>
-                          <div className="flex-1">
-                            <div className="flex justify-between">
-                              <span className="font-semibold text-gray-800">{reward.category}</span>
-                              <span className="font-bold text-blue-600">{reward.label}</span>
-                            </div>
-                            <p className="text-xs text-gray-500 mt-0.5">{reward.desc}</p>
-                          </div>
-                        </div>
-                      ))}
-                      {card.rewards.length === 0 && (
-                        <p className="text-sm text-gray-400 italic">尚未設定任何回饋規則</p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        )}
-
-        {/* === 分頁 3: 新增卡片 === */}
-        {activeTab === 'add' && (
-          <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500 bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
-            <div className="flex justify-between items-center border-b pb-4">
-              <h2 className="text-xl font-bold text-gray-800">新增信用卡</h2>
-              <button onClick={() => setActiveTab('cards')} className="p-1 text-gray-400 hover:text-gray-600 transition">
-                <X size={24} />
-              </button>
-            </div>
-
-            {/* 基本資料 */}
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">發卡銀行</label>
-                <input 
-                  type="text" 
-                  placeholder="例如：中國信託" 
-                  value={newCard.bank}
-                  onChange={(e) => setNewCard({...newCard, bank: e.target.value})}
-                  className="w-full border border-gray-300 rounded-xl px-4 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">卡片名稱</label>
-                <input 
-                  type="text" 
-                  placeholder="例如：LINE Pay卡" 
-                  value={newCard.name}
-                  onChange={(e) => setNewCard({...newCard, name: e.target.value})}
-                  className="w-full border border-gray-300 rounded-xl px-4 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">卡片顏色風格</label>
-                <div className="flex gap-2">
-                  {[
-                    'from-blue-500 to-blue-700', 
-                    'from-red-500 to-pink-500', 
-                    'from-emerald-500 to-teal-600',
-                    'from-purple-600 to-indigo-600',
-                    'from-gray-800 to-gray-600',
-                    'from-yellow-500 to-orange-500'
-                  ].map(color => (
-                    <button
-                      key={color}
-                      onClick={() => setNewCard({...newCard, color})}
-                      className={`w-8 h-8 rounded-full bg-gradient-to-br ${color} transition-all ${newCard.color === color ? 'ring-2 ring-offset-2 ring-blue-500 scale-110' : ''}`}
-                    />
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="border-t pt-4">
-              <h3 className="text-sm font-bold text-gray-700 mb-3">設定回饋規則</h3>
-              
-              {/* 已新增的回饋列表 */}
-              {newCard.rewards.length > 0 && (
-                <div className="mb-4 space-y-2">
-                  {newCard.rewards.map((r, i) => (
-                    <div key={i} className="flex justify-between items-center bg-blue-50 p-3 rounded-lg text-sm border border-blue-100">
-                      <div>
-                        <span className="font-bold text-gray-700 mr-2">[{r.category}]</span>
-                        <span className="text-blue-600 font-bold">{r.label}</span>
-                        <span className="text-gray-500 text-xs ml-2">{r.desc}</span>
-                      </div>
-                      <button onClick={() => handleRemoveRewardFromForm(i)} className="text-blue-400 hover:text-red-500 transition">
-                        <X size={16} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* 新增回饋的小表單 */}
-              <div className="bg-gray-50 p-4 rounded-xl space-y-3 border border-gray-200">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">消費類別</label>
-                    <select 
-                      value={newReward.category}
-                      onChange={(e) => setNewReward({...newReward, category: e.target.value})}
-                      className="w-full text-sm border border-gray-300 rounded-lg px-2 py-2 outline-none focus:border-blue-500"
-                    >
-                      {CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">顯示文字 (如: 5%)</label>
-                    <input 
-                      type="text" 
-                      value={newReward.label}
-                      onChange={(e) => setNewReward({...newReward, label: e.target.value})}
-                      className="w-full text-sm border border-gray-300 rounded-lg px-2 py-2 outline-none focus:border-blue-500"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1 flex items-center gap-1">
-                    排序用數值 
-                    <span className="text-[10px] text-gray-400">(輸入純數字，用於比大小)</span>
-                  </label>
-                  <input 
-                    type="number" 
-                    step="0.1"
-                    value={newReward.rate}
-                    onChange={(e) => setNewReward({...newReward, rate: e.target.value})}
-                    className="w-full text-sm border border-gray-300 rounded-lg px-2 py-2 outline-none focus:border-blue-500"
-                    placeholder="例如：5"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">條件說明 (選填)</label>
-                  <input 
-                    type="text" 
-                    value={newReward.desc}
-                    onChange={(e) => setNewReward({...newReward, desc: e.target.value})}
-                    className="w-full text-sm border border-gray-300 rounded-lg px-2 py-2 outline-none focus:border-blue-500"
-                    placeholder="如：需登錄 / 上限500元"
-                  />
-                </div>
-                <button 
-                  onClick={handleAddRewardToForm}
-                  className="w-full py-2 mt-2 bg-gray-200 text-gray-700 rounded-lg text-sm font-semibold hover:bg-gray-300 transition flex items-center justify-center gap-1"
-                >
-                  <Plus size={16} /> 加入此條規則
-                </button>
-              </div>
-            </div>
-
-            <button 
-              onClick={handleSaveCard}
-              className="w-full py-3 mt-4 bg-blue-600 text-white rounded-xl font-bold shadow-md hover:bg-blue-700 transition"
+        {/* 底部導覽列 */}
+        {activeTab !== 'add' && (
+          <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-gray-100 p-2 grid grid-cols-2 gap-2 z-20 shadow-[0_-5px_15px_-5px_rgba(0,0,0,0.05)]">
+            <button
+              onClick={() => setActiveTab('home')}
+              className={`flex flex-col items-center p-3 rounded-2xl ${activeTab === 'home' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'}`}
             >
-              儲存卡片並返回
+              <Users size={24} className={activeTab === 'home' ? 'text-blue-600' : 'text-gray-300'} />
+              <span className={`text-[10px] mt-1 font-medium ${activeTab === 'home' ? 'text-blue-700' : 'text-gray-600'}`}>查回饋</span>
             </button>
-          </div>
+            <button
+              onClick={() => setActiveTab('cards')}
+              className={`flex flex-col items-center p-3 rounded-2xl ${activeTab === 'cards' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'}`}
+            >
+              <CreditCard size={24} className={activeTab === 'cards' ? 'text-blue-600' : 'text-gray-300'} />
+              <span className={`text-[10px] mt-1 font-medium ${activeTab === 'cards' ? 'text-blue-700' : 'text-gray-600'}`}>我的卡包</span>
+            </button>
+          </nav>
         )}
-      </main>
-
-      {/* Bottom Navigation */}
-      <nav className="bg-white border-t border-gray-200 fixed bottom-0 w-full max-w-md flex justify-around pb-safe pt-2 px-2 z-20">
-        <button 
-          onClick={() => { setActiveTab('home'); setSelectedCategory(null); }}
-          className={`flex flex-col items-center p-2 min-w-[64px] transition-colors ${activeTab === 'home' ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}
-        >
-          <Home size={24} className={activeTab === 'home' ? 'fill-blue-50' : ''} />
-          <span className="text-[10px] mt-1 font-medium">查回饋</span>
-        </button>
-        <button 
-          onClick={() => setActiveTab('cards')}
-          className={`flex flex-col items-center p-2 min-w-[64px] transition-colors ${activeTab === 'cards' || activeTab === 'add' ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}
-        >
-          <CreditCard size={24} className={activeTab === 'cards' || activeTab === 'add' ? 'fill-blue-50' : ''} />
-          <span className="text-[10px] mt-1 font-medium">我的卡包</span>
-        </button>
-      </nav>
+      </div>
     </div>
   );
 }
